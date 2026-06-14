@@ -151,7 +151,7 @@ def generate_ai_message(weather, events):
     {events}
     """
     
-  chat_completion = client.chat.completions.create(
+    chat_completion = client.chat.completions.create(
         messages=[{"role": "user", "content": prompt}],
         model="llama-3.1-8b-instant",
         temperature=0.7, # 呟きのバリエーション（ひねり）を豊かにするため、少し遊び心（0.7）を持たせます
