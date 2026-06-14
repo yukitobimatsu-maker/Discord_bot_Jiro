@@ -88,7 +88,7 @@ def get_calendar_events():
         end_of_day = (now.replace(hour=23, minute=59, second=59, microsecond=0) - datetime.timedelta(hours=9)).isoformat() + 'Z'
 
         events_summary = []
-        events_summary.append(f"📅 本日 {today_str} ({wday_str}) の予定")
+        events_summary.append(f"📅 {today_str} ({wday_str}) ")
         events_summary.append("------------------")
 
         has_any_event = False
@@ -151,7 +151,7 @@ def generate_ai_message(weather, events):
     [ここにジロウの口調で、京都の天気や予定に絡めたひねりの効いた一言を1〜2文で書く]
 
     **【本日の天気】**
-    * **京都南部の天気:** [ここに現在の天気を短く簡潔に記載]
+    * **京都南部の天気:** [ここに現在の天気の箇条書きデータをそのまま、あるいは綺麗に見やすく整理して、ここに記載]
     **【本日の予定】**
     [Googleカレンダーの箇条書きデータをそのまま、あるいは綺麗に見やすく整理して、ここに記載]
 
