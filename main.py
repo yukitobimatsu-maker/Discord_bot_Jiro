@@ -100,7 +100,7 @@ def generate_ai_message(weather, events):
 
 def send_to_discord(text):
     payload = {
-        "username": "タロウ",
+        "username": "Jiro",
         "avatar_url": "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=150",
         "content": text
     }
