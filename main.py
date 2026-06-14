@@ -150,14 +150,13 @@ def generate_ai_message(weather, events):
     chat_completion = client.chat.completions.create(
         messages=[{"role": "user", "content": prompt}],
         model="llama-3.1-8b-instant",
-        temperature=0.7, # 呟きのバリエーション（ひねり）を豊かにするため、少し遊び心（0.7）を持たせます
+        temperature=0.8, # 呟きのバリエーション（ひねり）を豊かにするため、少し遊び心（0.7）を持たせます
     )
     return chat_completion.choices[0].message.content
 
 def send_to_discord(text):
     payload = {
-        "username": "ジロウ",
-        "avatar_url": "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=150",
+        "username": "Jiro",
         "content": text
     }
     requests.post(DISCORD_URL, json=payload)
