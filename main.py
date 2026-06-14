@@ -63,12 +63,10 @@ def get_calendar_events():
 
         has_any_event = False
 
-        # 各カレンダーIDから予定を引っこ抜く
         for cal_id in CALENDAR_IDS:
             if cal_id == "primary" or not cal_id.strip():
                 continue
             try:
-                # カレンダーの表示名を取得
                 cal_info = service.calendars().get(calendarId=cal_id).execute()
                 cal_name = cal_info.get('summary', '共有カレンダー')
 
@@ -78,14 +76,11 @@ def get_calendar_events():
                 ).execute()
                 events = events_result.get('items', [])
 
-                # このカレンダーに予定がある場合のみ、グループヘッダーを表示
                 if events:
                     has_any_event = True
-                    # カレンダー名の上に少し隙間を空ける（2つ目以降のカレンダー用）
                     if len(events_summary) > 2:
                         events_summary.append("")
                     
-                    # 📌 カレンダー名 を追加
                     events_summary.append(f"📌 **{cal_name}**")
 
                     for event in events:
