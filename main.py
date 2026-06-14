@@ -28,16 +28,27 @@ def get_calendar_events():
         creds = service_account.Credentials.from_service_account_info(sa_info, scopes=SCOPES)
         service = build('calendar', 'v3', credentials=creds)
 
-        now = datetime.datetime.utcnow()
-        start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat() + 'Z'
-        end_of_day = now.replace(hour=23, minute=59, second=59, microsecond=0).isoformat() + 'Z'
+        # 日本時間 (JST) での「今日」の範囲を計算
+        now = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+        today_str = now.strftime('%Y/%m/%d')
+        wdays = ["月", "火", "水", "木", "金", "土", "日"]
+        wday_str = wdays[now.weekday()]
+
+        # Google API用のUTC時間範囲を設定
+        start_of_day = (now.replace(hour=0, minute=0, second=0, microsecond=0) - datetime.timedelta(hours=9)).isoformat() + 'Z'
+        end_of_day = (now.replace(hour=23, minute=59, second=59, microsecond=0) - datetime.timedelta(hours=9)).isoformat() + 'Z'
 
         calendar_list = service.calendarList().list().execute()
         events_summary = []
+        
+        # ヘッダー部分を作成
+        events_summary.append(f"本日 {today_str} ({wday_str}) の予定")
+        events_summary.append("------------------")
 
         for cal in calendar_list.get('items', []):
             cal_name = cal['summary']
-            if any(k in cal_name for k in ["祝日", "Birthday", "住所"]):
+            # スキップしたい標準カレンダー（日本の祝日など）を除外
+            if any(k in cal_name for k in ["祝日", "Birthday", "住所", "日本のイベント"]):
                 continue
 
             events_result = service.events().list(
@@ -46,18 +57,30 @@ def get_calendar_events():
             ).execute()
             events = events_result.get('items', [])
 
-            if events:
-                events_summary.append(f"■ {cal_name}")
-                for event in events:
-                    start = event['start'].get('dateTime', event['start'].get('date'))
-                    title = event['summary']
-                    if 'T' in start:
-                        time_str = start.split('T')[1][:5]
-                        events_summary.append(f" ・{time_str}〜 : {title}")
+            for event in events:
+                start = event['start'].get('dateTime', event['start'].get('date'))
+                title = event['summary']
+                
+                if 'T' in start:
+                    # 時間指定のある予定 (例: 14:00 〜 15:00)
+                    time_str = start.split('T')[1][:5]
+                    # 終了時刻も取得
+                    end = event['end'].get('dateTime', '')
+                    if 'T' in end:
+                        end_str = end.split('T')[1][:5]
+                        time_range = f"{time_str} 〜 {end_str}"
                     else:
-                        events_summary.append(f" ・終日 : {title}")
+                        time_range = f"{time_str} 〜"
+                    events_summary.append(f"・{time_range} : {title}  {cal_name}")
+                else:
+                    # 終日の予定
+                    events_summary.append(f"・終日 : {title}  {cal_name}")
 
-        return "\n".join(events_summary) if events_summary else "本日の予定は特に入っていません。"
+        # 予定が1つも取得できなかった場合
+        if len(events_summary) <= 2:
+            events_summary.append("本日の予定は特に入っていません。")
+
+        return "\n".join(events_summary)
     except Exception as e:
         return f"カレンダーの取得に失敗しました: {e}"
 
