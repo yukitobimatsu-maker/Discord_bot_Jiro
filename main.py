@@ -53,15 +53,17 @@ def get_calendar_events():
         wdays = ["月", "火", "水", "木", "金", "土", "日"]
         wday_str = wdays[now.weekday()]
 
-        # Google API用のUTC時間範囲を設定（日本の0:00〜23:59をUTCに逆算）
+        # Google API用のUTC時間範囲を設定
         start_of_day = (now.replace(hour=0, minute=0, second=0, microsecond=0) - datetime.timedelta(hours=9)).isoformat() + 'Z'
         end_of_day = (now.replace(hour=23, minute=59, second=59, microsecond=0) - datetime.timedelta(hours=9)).isoformat() + 'Z'
 
         events_summary = []
-        events_summary.append(f"本日 {today_str} ({wday_str}) の予定")
+        events_summary.append(f"📅 本日 {today_str} ({wday_str}) の予定")
         events_summary.append("------------------")
 
-        # 各カレンダーIDから直接予定を引っこ抜く
+        has_any_event = False
+
+        # 各カレンダーIDから予定を引っこ抜く
         for cal_id in CALENDAR_IDS:
             if cal_id == "primary" or not cal_id.strip():
                 continue
@@ -76,28 +78,37 @@ def get_calendar_events():
                 ).execute()
                 events = events_result.get('items', [])
 
-                for event in events:
-                    start = event['start'].get('dateTime', event['start'].get('date'))
-                    title = event['summary']
+                # このカレンダーに予定がある場合のみ、グループヘッダーを表示
+                if events:
+                    has_any_event = True
+                    # カレンダー名の上に少し隙間を空ける（2つ目以降のカレンダー用）
+                    if len(events_summary) > 2:
+                        events_summary.append("")
                     
-                    if 'T' in start:
-                        time_str = start.split('T')[1][:5]
-                        end = event['end'].get('dateTime', '')
-                        if 'T' in end:
-                            end_str = end.split('T')[1][:5]
-                            time_range = f"{time_str} 〜 {end_str}"
+                    # 📌 カレンダー名 を追加
+                    events_summary.append(f"📌 **{cal_name}**")
+
+                    for event in events:
+                        start = event['start'].get('dateTime', event['start'].get('date'))
+                        title = event['summary']
+                        
+                        if 'T' in start:
+                            time_str = start.split('T')[1][:5]
+                            end = event['end'].get('dateTime', '')
+                            if 'T' in end:
+                                end_str = end.split('T')[1][:5]
+                                time_range = f"{time_str} 〜 {end_str}"
+                            else:
+                                time_range = f"{time_str} 〜"
+                            events_summary.append(f" ・ {time_range} : {title}")
                         else:
-                            time_range = f"{time_str} 〜"
-                        events_summary.append(f"・{time_range} : {title}  {cal_name}")
-                    else:
-                        events_summary.append(f"・終日 : {title}  {cal_name}")
+                            events_summary.append(f" ・ 終日 : {title}")
             except Exception as cal_err:
-                # 特定のカレンダーで権限エラー等が出ても、全体を止めずにスキップする
                 print(f"カレンダー {cal_id} の取得に失敗: {cal_err}")
                 continue
 
-        if len(events_summary) <= 2:
-            return "本日の予定は特に入っていません。"
+        if not has_any_event:
+            events_summary.append("本日の予定は特に入っていません。")
 
         return "\n".join(events_summary)
     except Exception as e:
