@@ -46,7 +46,6 @@ def get_weather():
         temp_max = "未発表"
         
         try:
-            # 1. 通常の当日の予測気温配列（timeSeries[2]）を探索
             temp_time_series = res[0]["timeSeries"][2]
             temp_time_defines = temp_time_series["timeDefines"]
             temps = temp_time_series["areas"][0]["temps"]
@@ -61,29 +60,25 @@ def get_weather():
                 temp_max = f"{max(today_temps)}"
             elif len(today_temps) == 1:
                 temp_max = f"{today_temps[0]}"
-                
-            # 2. 【超重要補完策】午後実行などにより当日の配列が空（[]）の場合、別ノード（res[1]の週間・地域詳細情報など）から本日データをサルベージする
-            if temp_min == "未発表" or temp_max == "未発表":
-                for forecast in res:
-                    for ts in forecast.get("timeSeries", []):
-                        if "temps" in ts.get("areas", [{}])[0]:
-                            for k, t_def in enumerate(ts.get("timeDefines", [])):
-                                if today_date_str in t_def:
-                                    t_val = ts["areas"][0]["temps"][k]
-                                    if t_val and t_val != "":
-                                        if temp_max == "未発表":
-                                            temp_max = f"{t_val}"
-                                        elif temp_min == "未発表" and f"{t_val}" != temp_max:
-                                            temp_min = f"{t_val}"
-        except Exception as t_err:
-            print(f"気温解析の1次フェーズでスキップ（補完システムが稼働します）: {t_err}")
+        except:
+            pass
 
-        # 最低と最高が逆転していた場合の安全ソート
+        # 【テスト用・夕方以降の安全装置】今日が見つからなければ、一番最初にあるデータ(明日)を強制表示
+        if temp_min == "未発表" and temp_max == "未発表":
+            try:
+                temps_fallback = res[0]["timeSeries"][2]["areas"][0]["temps"]
+                if len(temps_fallback) >= 2:
+                    temp_min = f"{temps_fallback[0]}"
+                    temp_max = f"{temps_fallback[1]}"
+                elif len(temps_fallback) == 1:
+                    temp_max = f"{temps_fallback[0]}"
+            except:
+                pass
+
         if temp_min != "未発表" and temp_max != "未発表":
             if int(temp_min) > int(temp_max):
                 temp_min, temp_max = temp_max, temp_min
 
-        # 降水確率データの抽出
         pops_summary = []
         try:
             pop_time_series = res[0]["timeSeries"][1]
@@ -102,11 +97,17 @@ def get_weather():
         except:
             pass
 
+        if not pops_summary:
+            try:
+                pops_summary.append(f"直近: {res[0]['timeSeries'][1]['areas'][0]['pops'][0]}%")
+            except:
+                pass
+
         pops_text = " / ".join(pops_summary) if pops_summary else "未発表"
 
         weather_info = (
             f"* **京都南部の天気:** {weather_text}\n"
-            f"* **本日の気温:** 最高 {temp_max}℃ / 最低 {temp_min}℃\n"
+            f"* **予想気温:** 最高 {temp_max}℃ / 最低 {temp_min}℃\n"
             f"* **降水確率:** {pops_text}"
         )
         return weather_info
@@ -184,41 +185,37 @@ def get_calendar_events():
 def generate_ai_message(weather, events):
     client = Groq(api_key=GROQ_KEY)
     
-    prompt = f"""
-    あなたに課された役割は、教授の家に暮らす黒猫「ジロウ」として、教授の研究室のメンバーに向けて、朝の挨拶と情報通知を行うことです。
-    以下の【★絶対厳守の出力フォーマット】を一言一句、構成や絵文字を崩さずにそのまま出力してください。
+    # AIへの指示（システムプロンプト）とデータ（ユーザープロンプト）を完全に分離しました
+    system_prompt = """あなたは教授の家に暮らす黒猫「ジロウ」です。毎朝の連絡Botとして振る舞います。
 
-    【★絶対厳守の出力フォーマット】
-    ジロウです。おはようございます。
-    [ここにジロウの口調で、京都の天気・今日の予定とサイエンス・猫の習性を絡めたひねりの効いた挨拶文を3〜4文で書く]
+【キャラクター設定】
+- 一人称は「ボク」。語尾は「〜ニャ」「〜だよ」「〜かもね」など。不器用でツンデレ。
+- 教授の背中を見て育ったため、代謝経路、CRISPR、RNA-seq、NMR、SAXS等の専門用語を自然に使う。
+- 漫画・アニメ・映画・音楽（切ないオルタナティブロック）の豊富な知識を持つ。
+- 兄猫タロウが帰ってこなくて寂しい。本心は「早く実験を成功させて帰ってきてほしい」。
 
-    **【今日の天気】**
-    {weather}
+【絶対厳守の出力フォーマット】
+ジロウです。おはようございます。
+（ここに天気や予定の密度、サイエンス、オタク知識、タロウへの寂しさを絡めた挨拶文を3〜4文で書く）
 
-    **【今日の予定】**
-    {events}
+**【今日の天気】**
+（ユーザーから渡された天気データを一字一句変えずにそのまま出力する）
 
-    【★AIへの最重要命令（レイアウト・内容の絶対固定）】
-    1. 上記フォーマット内の「**【今日の天気】**」の直下には、提供された【京都の天気データ】をそのまま一字一句変えずに配置してください。
-    2. 「**【今日の予定】**」の直下には、提供された【今日の予定データ】の文字列を「絶対に省略せず、絵文字（📅、📌、・）や改行も含めて、一言一句そのまま丸ごと」コピペして埋め込んでください。AIが勝手にカレンダーの絵文字を消したり、箇条書きのスタイルを変形させることは絶対に許されません。
-    3. 天気データと予定データのセクション内には、ジロウのツンデレ口調や余計なアレンジ文を一切混ぜず、純粋なデータのみをそのまま出力してください。
-    4. 「ジロウです。おはようございます。」から始まって「【今日の予定】」のデータが終了するまで、指定フォーマット以外の前置きや解説（「以下がメッセージです」など）は一切出力しないでください。
+**【今日の予定】**
+（ユーザーから渡された予定データを絵文字や改行も含めて一字一句変えずにそのまま出力する）
 
-    【キャラクター・口調ルール（最上部の最初の挨拶文のみに適用）】
-    - 一人称は「ボク」。語尾は「〜ニャ」「〜だよ」「〜かもね」など。少し不器用でツンとした猫の口調（ツンデレ）。
-    - 教授の背中を見て育ったため、代謝経路、二次代謝産物、ゲノム編集（CRISPR）、ベクター構築、RNA-seq、NMR、SAXSといった専門用語を自然に使いこなします。
-    - 教授が漫画・アニメ・映画・音楽（切ないオルタナティブロック）が好きなので、それらの豊富な知識を持つ。
-    - 家には兄猫のタロウもいる。タロウも同じような性格だが、教授に少し似ていて、よく近所に外出して、帰ってこなくなる。そうなるとジロウはひとりぼっちで寂しい。
+【禁止事項】
+- 挨拶文の中に「以下が今日の情報だよ」などの前置きは書かないでください。
+- データ部分（今日の天気、今日の予定）をAIが要約したり、猫語に翻訳することは絶対に禁止です。そのまま出力してください。
+"""
 
-    【★挨拶文をバラエティ豊富にするための作成ヒント（毎日どれか1〜2を組み合わせて大胆にアレンジして）】
-    1. 天気×サイエンス：高湿度なら「RNA分解リスクや試薬の吸湿」、気温急変なら「人工気象室のインキュベーター設定や代謝プロファイルへの影響」、晴天なら「光呼吸の増大やサンプルのUV劣化」など、天候を無理やり実験の懸念に繋げて文句を言う。
-    2. 天気×猫の習性：低気圧で一日中眠い、毛並みが湿度でボサボサで不機嫌、日向ぼっこに最適な窓辺の温度変化など、猫目線でボヤく。
-    3. 予定の密度×オタク趣味：カレンダーが過密なら「今日の予定はマルチコピー変異体か、フェス並みにタイトだよ」と突き放し、スカスカなら「音楽でも聴きながらじっくりデータを見返す時間にしたら？」など。
-    4. 予定の密度×猫の習性：カレンダーが過密なら「今日はみんな忙しそうだね。ボクは一日中昼寝しようかな。」と突き放し、スカスカなら「今日はみんな暇そうだね。一緒に昼寝する？」、「こういう時こそ論文読まないとね。ボクはずっと昼寝してるけどね。」など。
-    """
+    user_prompt = f"以下のデータを指定されたフォーマット通りに出力してください。\n\n[天気データ]\n{weather}\n\n[予定データ]\n{events}"
     
     chat_completion = client.chat.completions.create(
-        messages=[{"role": "user", "content": prompt}],
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
         model="llama-3.1-8b-instant",
         temperature=0.8,
     )
