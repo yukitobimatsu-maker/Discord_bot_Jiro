@@ -34,38 +34,60 @@ WEATHER_URL = "https://www.jma.go.jp/bosai/forecast/data/forecast/260000.json"
 
 def get_weather():
     try:
-        # 天気概況と予報の取得
+        # 気象庁APIから予報データを取得
         res = requests.get(WEATHER_URL).json()
         area_name = res[0]["timeSeries"][0]["areas"][0]["area"]["name"]
         weather_text = res[0]["timeSeries"][0]["areas"][0]["weathers"][0]
 
-        # 気温・湿度データの取得（別の詳細APIから京都地方気象台のデータを取得）
-        temp_url = "https://www.jma.go.jp/bosai/forecast/data/forecast/260000.json"
-        # 気象庁の翌日・直近データから気温と湿度を抽出
-        # ※APIの構造上、発表時間帯によって取得位置が変動するため安全にシミュレート
+        # 現在時刻（日本時間）の取得と今日の日付文字列（YYYY-MM-DD）の作成
+        now = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+        today_date_str = now.strftime('%Y-%m-%d')
+
+        # 1. 気温データの抽出（timeSeries[2]）
         temp_min = "--"
         temp_max = "--"
-        humidity = "--"
+        temp_time_series = res[0]["timeSeries"][2]
+        temp_time_defines = temp_time_series["timeDefines"]
+        temps = temp_time_series["areas"][0]["temps"]
 
-        try:
-            # 京都（地域コード: 260010）の気温予報
-            # 1つ目の要素のタイムシリーズから本日の予想気温を取得を試みる
-            temps = res[0]["timeSeries"][2]["areas"][0]["temps"]
-            if len(temps) >= 2:
-                temp_min = temps[0]
-                temp_max = temps[1]
-            elif len(temps) == 1:
-                temp_max = temps[0]
-        except:
-            pass
+        for i, time_define in enumerate(temp_time_defines):
+            if today_date_str in time_define:
+                current_temp = temps[i]
+                if temp_max == "--":
+                    temp_max = current_temp
+                else:
+                    temp_min = temp_max
+                    temp_max = current_temp
 
-        # 湿度は別の中期予報または概況から補完、あるいは固定エリアの平均値を想定
-        # 気象庁APIの特性上、朝方には当日の最高・最低気温が綺麗に揃います
-        
+        # 2. 降水確率データの抽出（timeSeries[1]）
+        # ※ 6時間ごと（00-06, 06-12, 12-18, 18-24）のデータから、本日の枠を安全に特定します
+        pops_summary = []
+        pop_time_series = res[0]["timeSeries"][1]
+        pop_time_defines = pop_time_series["timeDefines"]
+        pops = pop_time_series["areas"][0]["pops"]
+
+        for j, time_define in enumerate(pop_time_defines):
+            if today_date_str in time_define:
+                # ISO形式の時間（例: "2026-06-15T06:00:00+09:00"）から時間帯を識別
+                try:
+                    time_hour = time_define.split('T')[1][:2]
+                    time_label = f"{time_hour}時〜"
+                    if time_hour == "00": time_label = "00-06時"
+                    elif time_hour == "06": time_label = "06-12時"
+                    elif time_hour == "12": time_label = "12-18時"
+                    elif time_hour == "18": time_label = "18-24時"
+                    
+                    pops_summary.append(f"{time_label}: {pops[j]}%")
+                except:
+                    continue
+
+        pops_text = " / ".join(pops_summary) if pops_summary else "--%"
+
         weather_info = (
             f"【地域】{area_name}（京都南部）\n"
             f"【天気】{weather_text}\n"
-            f"【気温】最高: {temp_max}℃ / 最低: {temp_min}℃"
+            f"【降水確率】{pops_text}"
+            f"【気温】最高: {temp_max}℃ / 最低: {temp_min}℃\n"
         )
         return weather_info
     except Exception as e:
