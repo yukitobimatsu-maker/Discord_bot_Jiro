@@ -227,7 +227,7 @@ def generate_ai_message(weather, events):
 
 def send_to_discord(text):
     payload = {
-        "username": "ジロウ",
+        "username": "Jiro",
         "content": text
     }
     requests.post(DISCORD_URL, json=payload)
