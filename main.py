@@ -32,199 +32,60 @@ CALENDAR_IDS = [
 # 気象庁API (260000 = 京都府・南部に固定)
 WEATHER_URL = "https://www.jma.go.jp/bosai/forecast/data/forecast/260000.json"
 
+
 def get_weather():
     try:
-        # 気象庁APIから予報データを取得
         res = requests.get(WEATHER_URL).json()
         area_name = res[0]["timeSeries"][0]["areas"][0]["area"]["name"]
         weather_text = res[0]["timeSeries"][0]["areas"][0]["weathers"][0]
 
-        # 現在時刻（日本時間）の取得と今日の日付文字列（YYYY-MM-DD）の作成
         now = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
         today_date_str = now.strftime('%Y-%m-%d')
 
-        # 1. 気温データの抽出（timeSeries[2]）
-        temp_min = "--"
-        temp_max = "--"
-        temp_time_series = res[0]["timeSeries"][2]
-        temp_time_defines = temp_time_series["timeDefines"]
-        temps = temp_time_series["areas"][0]["temps"]
-
-        for i, time_define in enumerate(temp_time_defines):
-            if today_date_str in time_define:
-                current_temp = temps[i]
-                if temp_max == "--":
-                    temp_max = current_temp
-                else:
-                    temp_min = temp_max
-                    temp_max = current_temp
-
-        # 2. 降水確率データの抽出（timeSeries[1]）
-        # ※ 6時間ごと（00-06, 06-12, 12-18, 18-24）のデータから、本日の枠を安全に特定します
-        pops_summary = []
-        pop_time_series = res[0]["timeSeries"][1]
-        pop_time_defines = pop_time_series["timeDefines"]
-        pops = pop_time_series["areas"][0]["pops"]
-
-        for j, time_define in enumerate(pop_time_defines):
-            if today_date_str in time_define:
-                # ISO形式の時間（例: "2026-06-15T06:00:00+09:00"）から時間帯を識別
-                try:
-                    time_hour = time_define.split('T')[1][:2]
-                    time_label = f"{time_hour}時〜"
-                    if time_hour == "00": time_label = "00-06時"
-                    elif time_hour == "06": time_label = "06-12時"
-                    elif time_hour == "12": time_label = "12-18時"
-                    elif time_hour == "18": time_label = "18-24時"
-                    
-                    pops_summary.append(f"{time_label}: {pops[j]}%")
-                except:
-                    continue
-
-        pops_text = " / ".join(pops_summary) if pops_summary else "--%"
-
-        weather_info = (
-            f"【地域】{area_name}（京都南部）\n"
-            f"【天気】{weather_text}\n"
-            f"【降水確率】{pops_text}"
-            f"【気温】最高: {temp_max}℃ / 最低: {temp_min}℃\n"
-        )
-        return weather_info
-    except Exception as e:
-        return "京都の天気データの取得に失敗しました。"
-
-def get_calendar_events():
-    try:
-        sa_info = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
-        creds = service_account.Credentials.from_service_account_info(sa_info, scopes=SCOPES)
-        service = build('calendar', 'v3', credentials=creds)
-
-        # 日本時間 (JST) での「今日」の範囲を計算
-        now = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
-        today_str = now.strftime('%Y/%m/%d')
-        wdays = ["月", "火", "水", "木", "金", "土", "日"]
-        wday_str = wdays[now.weekday()]
-
-        # Google API用のUTC時間範囲を設定
-        start_of_day = (now.replace(hour=0, minute=0, second=0, microsecond=0) - datetime.timedelta(hours=9)).isoformat() + 'Z'
-        end_of_day = (now.replace(hour=23, minute=59, second=59, microsecond=0) - datetime.timedelta(hours=9)).isoformat() + 'Z'
-
-        events_summary = []
-        events_summary.append(f"📅 {today_str} ({wday_str}) ")
-        events_summary.append("------------------")
-
-        has_any_event = False
-
-        for cal_id in CALENDAR_IDS:
-            if cal_id == "primary" or not cal_id.strip():
-                continue
-            try:
-                cal_info = service.calendars().get(calendarId=cal_id).execute()
-                cal_name = cal_info.get('summary', '共有カレンダー')
-
-                events_result = service.events().list(
-                    calendarId=cal_id, timeMin=start_of_day, timeMax=end_of_day,
-                    singleEvents=True, orderBy='startTime'
-                ).execute()
-                events = events_result.get('items', [])
-
-                if events:
-                    has_any_event = True
-                    if len(events_summary) > 2:
-                        events_summary.append("")
-                    
-                    events_summary.append(f"📌 **{cal_name}**")
-
-                    for event in events:
-                        start = event['start'].get('dateTime', event['start'].get('date'))
-                        title = event['summary']
-                        
-                        if 'T' in start:
-                            time_str = start.split('T')[1][:5]
-                            end = event['end'].get('dateTime', '')
-                            if 'T' in end:
-                                end_str = end.split('T')[1][:5]
-                                time_range = f"{time_str} 〜 {end_str}"
-                            else:
-                                time_range = f"{time_str} 〜"
-                            events_summary.append(f" ・ {time_range} : {title}")
-                        else:
-                            events_summary.append(f" ・ 終日 : {title}")
-            except Exception as cal_err:
-                print(f"カレンダー {cal_id} の取得に失敗: {cal_err}")
-                continue
-
-        if not has_any_event:
-            events_summary.append("本日の予定は特に入っていません。")
-
-        return "\n".join(events_summary)
-    except Exception as e:
-        return f"カレンダーの取得に失敗しました: {e}"
-
-import os
-import json
-import datetime
-import requests
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from groq import Groq
-
-SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
-DISCORD_URL = os.environ["DISCORD_WEBHOOK_URL"]
-GROQ_KEY = os.environ["GROQ_API_KEY"]
-
-# ==========================================
-# 【重要】ここにあなたのカレンダーIDをすべて入力してください
-# ==========================================
-CALENDAR_IDS = [
-    "primary",  # 通常は空のまま
-    "ここに1つ目のカレンダーIDを入力@gmail.com",
-    "ここに2つ目のカレンダーIDを入力@group.calendar.google.com",
-    "ここに3つ目のカレンダーIDを入力@group.calendar.google.com"
-]
-
-# 気象庁API (260000 = 京都府・南部に固定)
-WEATHER_URL = "https://www.jma.go.jp/bosai/forecast/data/forecast/260000.json"
-
-
-def get_weather():
-    try:
-        # 気象庁APIから予報データを取得
-        res = requests.get(WEATHER_URL).json()
-        area_name = res[0]["timeSeries"][0]["areas"][0]["area"]["name"]
-        weather_text = res[0]["timeSeries"][0]["areas"][0]["weathers"][0]
-
-        # 現在時刻（日本時間）の取得と今日の日付文字列（YYYY-MM-DD）の作成
-        now = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
-        today_date_str = now.strftime('%Y-%m-%d')
-
-        # 1. 気温データの抽出（timeSeries[2]）
-        temp_min = "--"
-        temp_max = "--"
+        # 気温を安全かつ確実に取得するロジック
+        temp_min = "未発表"
+        temp_max = "未発表"
         
         try:
+            # 1. まずは通常の天気予報（res[0]）から本日の気温データを探索
             temp_time_series = res[0]["timeSeries"][2]
             temp_time_defines = temp_time_series["timeDefines"]
             temps = temp_time_series["areas"][0]["temps"]
 
-            # 本日の日付にマッチする気温データをリストに集める
             today_temps = []
             for i, time_define in enumerate(temp_time_defines):
                 if today_date_str in time_define:
                     today_temps.append(int(temps[i]))
 
-            # データの数に応じて最高・最低を安全に割り振り
             if len(today_temps) >= 2:
-                # 2つ以上ある場合は、気象庁の標準仕様（1つ目が最低、2つ目が最高、あるいはその逆）をソートして安全にマッピング
-                temp_min = min(today_temps)
-                temp_max = max(today_temps)
+                temp_min = f"{min(today_temps)}"
+                temp_max = f"{max(today_temps)}"
             elif len(today_temps) == 1:
-                # 1つしか無い時間帯（日中〜夕方以降）は、それを最高気温として扱う
-                temp_max = today_temps[0]
+                temp_max = f"{today_temps[0]}"
+                
+            # 2. 【超重要補完】もし昼以降の実行でデータが足りない場合、res[1]（時系列詳細や週間側）から本日の最低・最高をバックアップ抽出
+            if temp_min == "未発表" or temp_max == "未発表":
+                for forecast in res:
+                    for ts in forecast.get("timeSeries", []):
+                        # エリアデータ内の気温データをくまなくスキャン
+                        if "temps" in ts.get("areas", [{}])[0]:
+                            for k, t_def in enumerate(ts.get("timeDefines", [])):
+                                if today_date_str in t_def:
+                                    t_val = ts["areas"][0]["temps"][k]
+                                    if t_val and t_val != "":
+                                        if temp_max == "未発表":
+                                            temp_max = f"{t_val}"
+                                        elif temp_min == "未発表" and f"{t_val}" != temp_max:
+                                            temp_min = f"{t_val}"
         except Exception as t_err:
-            print(f"気温の解析に失敗: {t_err}")
+            print(f"気温の解析でエラー（補完ロジックがカバーします）: {t_err}")
 
-        # 2. 降水確率データの抽出（timeSeries[1]）
+        # 最低と最高が逆転していた場合の安全ソート補正
+        if temp_min != "未発表" and temp_max != "未発表":
+            if int(temp_min) > int(temp_max):
+                temp_min, temp_max = temp_max, temp_min
+
+        # 降水確率データの抽出
         pops_summary = []
         try:
             pop_time_series = res[0]["timeSeries"][1]
@@ -239,22 +100,20 @@ def get_weather():
                     elif time_hour == "06": time_label = "06-12時"
                     elif time_hour == "12": time_label = "12-18時"
                     elif time_hour == "18": time_label = "18-24時"
-                    
                     pops_summary.append(f"{time_label}: {pops[j]}%")
-        except Exception as p_err:
-            print(f"降水確率の解析に失敗: {p_err}")
+        except:
+            pass
 
-        pops_text = " / ".join(pops_summary) if pops_summary else "--%"
+        pops_text = " / ".join(pops_summary) if pops_summary else "未発表"
 
         weather_info = (
-            f"【地域】{area_name}（京都南部）\n"
-            f"【天気】{weather_text}\n"
-            f"【気温】最高: {temp_max}℃ / 最低: {temp_min}℃\n"
-            f"【降水確率】{pops_text}"
+            f"* **京都南部の天気:** {weather_text}\n"
+            f"* **本日の気温:** 最高 {temp_max}℃ / 最低 {temp_min}℃\n"
+            f"* **降水確率:** {pops_text}"
         )
         return weather_info
     except Exception as e:
-        return "京都の天気データの取得に失敗しました。"
+        return "* **京都南部の天気:** データ取得エラー\n* **本日の気温:** 未発表"
 
 
 def get_calendar_events():
@@ -323,17 +182,16 @@ def get_calendar_events():
     except Exception as e:
         return f"カレンダーの取得に失敗しました: {e}"
 
-
 def generate_ai_message(weather, events):
     client = Groq(api_key=GROQ_KEY)
     
     prompt = f"""
     あなたに課された役割は、教授の家に暮らす黒猫「ジロウ」として、教授の研究室のメンバーに向けて、朝の挨拶と情報通知を行うことです。
-    以下の【★絶対厳守の出力フォーマット】を一言一句、構成を崩さずにそのまま出力してください。
+    以下の【★絶対厳守の出力フォーマット】を一言一句、構成や絵文字を崩さずにそのまま出力してください。
 
     【★絶対厳守の出力フォーマット】
     ジロウです。おはようございます。
-    [ここにジロウの口調で、京都の天気・今日の予定とサイエンス・猫の習性を絡めたひねりの効いた一言を3〜4文で書く]
+    [ここにジロウの口調で、京都の天気・今日の予定とサイエンス・猫の習性を絡めたひねりの効いた挨拶文を3〜4文で書く]
 
     **【今日の天気】**
     {weather}
@@ -341,12 +199,13 @@ def generate_ai_message(weather, events):
     **【今日の予定】**
     {events}
 
-    【レイアウト崩れを防ぐための最重要命令】
-    - 上記フォーマット内の「**【今日の天気】**」の直下には、提供された【京都の天気データ】をそのまま配置してください。
-    - 「**【今日の予定】**」の直下には、提供された【今日の予定データ】の文字列を「絶対に省略せず、絵文字（📅、📌、・）や改行も含めて、一言一句そのまま丸ごと」埋め込んでください。AIが勝手にカレンダーの構造を書き換えたり、絵文字を削除することは厳禁です。
-    - 天気と予定のデータセクション内には、ジロウのツンデレ口調や余計なアレンジは一切混ぜず、客観的でクリアなデータのまま出力してください。
+    【★AIへの最重要命令（レイアウト・内容の絶対固定）】
+    1. 上記フォーマット内の「**【今日の天気】**」の直下には、提供された【京都の天気データ】をそのまま一字一句変えずに配置してください。
+    2. 「**【今日の予定】**」の直下には、提供された【今日の予定データ】の文字列を「絶対に省略せず、絵文字（📅、📌、・）や改行も含めて、一言一句そのまま丸ごと」コピペして埋め込んでください。AIが勝手にカレンダーの絵文字を消したり、箇条書きのスタイルを変形させることは絶対に許されません。
+    3. 天気データと予定データのセクション内には、ジロウのツンデレ口調や余計なアレンジ文を一切混ぜず、純粋なデータのみをそのまま出力してください。
+    4. 「ジロウです。おはようございます。」から始まって「【今日の予定】」のデータが終了するまで、指定フォーマット以外の前置きや解説（「以下がメッセージです」など）は一切出力しないでください。
 
-    【キャラクター・口調ルール（最初の挨拶のみ適用）】
+    【キャラクター・口調ルール（最上部の最初の挨拶文のみに適用）】
     - 一人称は「ボク」。語尾は「〜ニャ」「〜だよ」「〜かもね」など。少し不器用でツンとした猫の口調（ツンデレ）。
     - 教授の背中を見て育ったため、代謝経路、二次代謝産物、ゲノム編集（CRISPR）、ベクター構築、RNA-seq、NMR、SAXSといった専門用語を自然に使いこなします。
     - 教授が漫画・アニメ・映画・音楽（特にオルタナティブロック）が好きなので、豊富な知識を持つ。
@@ -357,16 +216,6 @@ def generate_ai_message(weather, events):
     2. 天気×猫の習性：低気圧で一日中眠い、毛並みが湿度でボサボサで不機嫌、日向ぼっこに最適な窓辺の温度変化など、猫目線でボヤく。
     3. 予定の密度×オタク趣味：カレンダーが過密なら「今日の予定はマルチコピー変異体か、フェス並みにタイトだよ」と突き放し、スカスカなら「音楽でも聴きながらじっくりデータを見返す時間にしたら？」など。
     4. 予定の密度×猫の習性：カレンダーが過密なら「今日はみんな忙しそうだね。僕は一日中昼寝しようかな。」と突き放し、スカスカなら「今日はみんな暇そうだね。一緒に昼寝する？」、「こういう時こそ論文読まないとね。僕はずっと昼寝してるけどね。」など。
-
-    【データ出力の注意点】
-    - 「ジロウです。おはようございます。」の冒頭から、指示通り「挨拶文」、「【今日の天気】」、「【今日の予定】」を順に出力し、余計な前置きや解説（「以下がメッセージです」など）は一切出力せず、指定のフォーマットのみを返してください。
-    - 「【レイアウト崩れを防ぐための最重要命令】」以降の項目は一切出力しないでください。
-
-    【京都の天気データ】
-    {weather}
-
-    【今日の予定データ】
-    {events}
     """
     
     chat_completion = client.chat.completions.create(
