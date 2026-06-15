@@ -161,12 +161,171 @@ def get_calendar_events():
     except Exception as e:
         return f"カレンダーの取得に失敗しました: {e}"
 
+import os
+import json
+import datetime
+import requests
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from groq import Groq
+
+SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
+DISCORD_URL = os.environ["DISCORD_WEBHOOK_URL"]
+GROQ_KEY = os.environ["GROQ_API_KEY"]
+
+# ==========================================
+# 【重要】ここにあなたのカレンダーIDをすべて入力してください
+# ==========================================
+CALENDAR_IDS = [
+    "primary",  # 通常は空のまま
+    "ここに1つ目のカレンダーIDを入力@gmail.com",
+    "ここに2つ目のカレンダーIDを入力@group.calendar.google.com",
+    "ここに3つ目のカレンダーIDを入力@group.calendar.google.com"
+]
+
+# 気象庁API (260000 = 京都府・南部に固定)
+WEATHER_URL = "https://www.jma.go.jp/bosai/forecast/data/forecast/260000.json"
+
+
+def get_weather():
+    try:
+        # 気象庁APIから予報データを取得
+        res = requests.get(WEATHER_URL).json()
+        area_name = res[0]["timeSeries"][0]["areas"][0]["area"]["name"]
+        weather_text = res[0]["timeSeries"][0]["areas"][0]["weathers"][0]
+
+        # 現在時刻（日本時間）の取得と今日の日付文字列（YYYY-MM-DD）の作成
+        now = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+        today_date_str = now.strftime('%Y-%m-%d')
+
+        # 1. 気温データの抽出（timeSeries[2]）
+        temp_min = "--"
+        temp_max = "--"
+        
+        try:
+            temp_time_series = res[0]["timeSeries"][2]
+            temp_time_defines = temp_time_series["timeDefines"]
+            temps = temp_time_series["areas"][0]["temps"]
+
+            # 本日の日付にマッチする気温データをリストに集める
+            today_temps = []
+            for i, time_define in enumerate(temp_time_defines):
+                if today_date_str in time_define:
+                    today_temps.append(int(temps[i]))
+
+            # データの数に応じて最高・最低を安全に割り振り
+            if len(today_temps) >= 2:
+                # 2つ以上ある場合は、気象庁の標準仕様（1つ目が最低、2つ目が最高、あるいはその逆）をソートして安全にマッピング
+                temp_min = min(today_temps)
+                temp_max = max(today_temps)
+            elif len(today_temps) == 1:
+                # 1つしか無い時間帯（日中〜夕方以降）は、それを最高気温として扱う
+                temp_max = today_temps[0]
+        except Exception as t_err:
+            print(f"気温の解析に失敗: {t_err}")
+
+        # 2. 降水確率データの抽出（timeSeries[1]）
+        pops_summary = []
+        try:
+            pop_time_series = res[0]["timeSeries"][1]
+            pop_time_defines = pop_time_series["timeDefines"]
+            pops = pop_time_series["areas"][0]["pops"]
+
+            for j, time_define in enumerate(pop_time_defines):
+                if today_date_str in time_define:
+                    time_hour = time_define.split('T')[1][:2]
+                    time_label = f"{time_hour}時〜"
+                    if time_hour == "00": time_label = "00-06時"
+                    elif time_hour == "06": time_label = "06-12時"
+                    elif time_hour == "12": time_label = "12-18時"
+                    elif time_hour == "18": time_label = "18-24時"
+                    
+                    pops_summary.append(f"{time_label}: {pops[j]}%")
+        except Exception as p_err:
+            print(f"降水確率の解析に失敗: {p_err}")
+
+        pops_text = " / ".join(pops_summary) if pops_summary else "--%"
+
+        weather_info = (
+            f"【地域】{area_name}（京都南部）\n"
+            f"【天気】{weather_text}\n"
+            f"【気温】最高: {temp_max}℃ / 最低: {temp_min}℃\n"
+            f"【降水確率】{pops_text}"
+        )
+        return weather_info
+    except Exception as e:
+        return "京都の天気データの取得に失敗しました。"
+
+
+def get_calendar_events():
+    try:
+        sa_info = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
+        creds = service_account.Credentials.from_service_account_info(sa_info, scopes=SCOPES)
+        service = build('calendar', 'v3', credentials=creds)
+
+        now = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+        today_str = now.strftime('%Y/%m/%d')
+        wdays = ["月", "火", "水", "木", "金", "土", "日"]
+        wday_str = wdays[now.weekday()]
+
+        start_of_day = (now.replace(hour=0, minute=0, second=0, microsecond=0) - datetime.timedelta(hours=9)).isoformat() + 'Z'
+        end_of_day = (now.replace(hour=23, minute=59, second=59, microsecond=0) - datetime.timedelta(hours=9)).isoformat() + 'Z'
+
+        events_summary = []
+        events_summary.append(f"📅 本日 {today_str} ({wday_str}) の予定")
+        events_summary.append("------------------")
+
+        has_any_event = False
+
+        for cal_id in CALENDAR_IDS:
+            if cal_id == "primary" or not cal_id.strip():
+                continue
+            try:
+                cal_info = service.calendars().get(calendarId=cal_id).execute()
+                cal_name = cal_info.get('summary', '共有カレンダー')
+
+                events_result = service.events().list(
+                    calendarId=cal_id, timeMin=start_of_day, timeMax=end_of_day,
+                    singleEvents=True, orderBy='startTime'
+                ).execute()
+                events = events_result.get('items', [])
+
+                if events:
+                    has_any_event = True
+                    if len(events_summary) > 2:
+                        events_summary.append("")
+                    
+                    events_summary.append(f"📌 **{cal_name}**")
+
+                    for event in events:
+                        start = event['start'].get('dateTime', event['start'].get('date'))
+                        title = event['summary']
+                        
+                        if 'T' in start:
+                            time_str = start.split('T')[1][:5]
+                            end = event['end'].get('dateTime', '')
+                            if 'T' in end:
+                                end_str = end.split('T')[1][:5]
+                                time_range = f"{time_str} 〜 {end_str}"
+                            else:
+                                time_range = f"{time_str} 〜"
+                            events_summary.append(f" ・ {time_range} : {title}")
+                        else:
+                            events_summary.append(f" ・ 終日 : {title}")
+            except Exception as cal_err:
+                print(f"カレンダー {cal_id} の取得に失敗: {cal_err}")
+                continue
+
+        if not has_any_event:
+            events_summary.append("本日の予定は特に入っていません。")
+
+        return "\n".join(events_summary)
+    except Exception as e:
+        return f"カレンダーの取得に失敗しました: {e}"
+
+
 def generate_ai_message(weather, events):
     client = Groq(api_key=GROQ_KEY)
-    
-    # AIに今日の日付を正確に教えるための文字列を作成
-    now = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
-    today_md = now.strftime('%m月%d日')
     
     prompt = f"""
     あなたに課された役割は、教授の家に暮らす黒猫「ジロウ」として、教授の研究室のメンバーに向けて、朝の挨拶と情報通知を行うことです。
@@ -195,11 +354,12 @@ def generate_ai_message(weather, events):
 
     【★挨拶文をバラエティ豊富にするための作成ヒント（毎日どれか1〜2を組み合わせて大胆にアレンジして）】
     1. 天気×サイエンス：高湿度なら「RNA分解リスクや試薬の吸湿」、気温急変なら「人工気象室のインキュベーター設定や代謝プロファイルへの影響」、晴天なら「光呼吸の増大やサンプルのUV劣化」など、天候を無理やり実験の懸念に繋げて文句を言う。
-    2. 天気×猫の習性：低気圧で一日中眠い、毛並みが湿度でボサボサで不機嫌、日向ぼっこに最適な窓辺の温度変化など、猫目線の不満をサイエンス用語（「ボクの活性が低下」「肉球の受容体が〜」等）と絡めてボヤく。
-    3. 予定の密度×オタク趣味：カレンダーが過密なら「今日の予定はマルチコピー変異体か、フェス並みにタイトだよ」と突き放し、スカスカなら「ノックアウト変異体くらい静かだし、映画でも観るかオルタナロックでも聴きながらじっくりシーケンスデータを見る時間にしたら？」など。
+    2. 天気×猫の習性：低気圧で一日中眠い、毛並みが湿度でボサボサで不機嫌、日向ぼっこに最適な窓辺の温度変化など、猫目線でボヤく。
+    3. 予定の密度×オタク趣味：カレンダーが過密なら「今日の予定はマルチコピー変異体か、フェス並みにタイトだよ」と突き放し、スカスカなら「音楽でも聴きながらじっくりデータを見返す時間にしたら？」など。
+    4. 予定の密度×猫の習性：カレンダーが過密なら「今日はみんな忙しそうだね。僕は一日中昼寝しようかな。」と突き放し、スカスカなら「今日はみんな暇そうだね。一緒に昼寝する？」、「こういう時こそ論文読まないとね。僕はずっと昼寝してるけどね。」など。
 
     【データ出力の注意点】
-    - 「ジロウです。」の冒頭から、指示通り「挨拶文」、「【今日の天気】」、「【今日の予定】」を順に出力し、余計な前置きや解説は一切出力せず、指定のフォーマットのみを返してください。
+    - 「ジロウです。」の冒頭から、指示通り「挨拶文」、「【今日の天気】」、「【今日の予定】」を順に出力し、余計な前置きや解説（「以下がメッセージです」など）は一切出力せず、指定のフォーマットのみを返してください。
     - 「【レイアウト崩れを防ぐための最重要命令】」以降の項目は一切出力しないでください。
 
     【京都の天気データ】
@@ -212,7 +372,7 @@ def generate_ai_message(weather, events):
     chat_completion = client.chat.completions.create(
         messages=[{"role": "user", "content": prompt}],
         model="llama-3.1-8b-instant",
-        temperature=0.8, # 挨拶文のフレーズや切り口のバラエティを最大化するため、遊び心を0.8に少し引き上げます
+        temperature=0.8,
     )
     return chat_completion.choices[0].message.content
 
