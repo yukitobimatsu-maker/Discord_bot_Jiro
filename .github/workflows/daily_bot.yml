@@ -1,11 +1,10 @@
 name: Daily Discord AI Bot
 
 on:
-  schedule:
-    # 毎日 UTC 21:12（日本時間 翌朝 6:12）に実行
-    # ※30分や0分などのキリの良い数字を避けることで、GitHub側の遅延を緩和します
-    - cron: '50 1 * * *'
-  workflow_dispatch: # 手動実行ボタンを有効化
+  # 外部（cron-job.orgなど）からのHTTPリクエストを受け付ける設定
+  repository_dispatch:
+    types: [trigger-black-cat-bot] # 任意のイベント名
+  workflow_dispatch: # 手動実行ボタンも残しておきます
 
 jobs:
   run-bot:
