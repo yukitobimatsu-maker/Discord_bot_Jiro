@@ -11,7 +11,7 @@ DISCORD_URL = os.environ["DISCORD_WEBHOOK_URL"]
 GROQ_KEY = os.environ["GROQ_API_KEY"]
 
 # ==========================================
-# 【重要】ここにステップ1で集めたカレンダーIDをすべて入力してください
+# カレンダーIDリスト
 # ==========================================
 CALENDAR_IDS = [
     "primary",  # サービスアカウント自身のメイン（通常は空）
@@ -42,12 +42,11 @@ def get_weather():
         now = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
         today_date_str = now.strftime('%Y-%m-%d')
 
-        # 気温を安全かつ確実に取得するロジック
         temp_min = "未発表"
         temp_max = "未発表"
         
         try:
-            # 1. まずは通常の天気予報（res[0]）から本日の気温データを探索
+            # 1. 通常の当日の予測気温配列（timeSeries[2]）を探索
             temp_time_series = res[0]["timeSeries"][2]
             temp_time_defines = temp_time_series["timeDefines"]
             temps = temp_time_series["areas"][0]["temps"]
@@ -63,11 +62,10 @@ def get_weather():
             elif len(today_temps) == 1:
                 temp_max = f"{today_temps[0]}"
                 
-            # 2. 【超重要補完】もし昼以降の実行でデータが足りない場合、res[1]（時系列詳細や週間側）から本日の最低・最高をバックアップ抽出
+            # 2. 【超重要補完策】午後実行などにより当日の配列が空（[]）の場合、別ノード（res[1]の週間・地域詳細情報など）から本日データをサルベージする
             if temp_min == "未発表" or temp_max == "未発表":
                 for forecast in res:
                     for ts in forecast.get("timeSeries", []):
-                        # エリアデータ内の気温データをくまなくスキャン
                         if "temps" in ts.get("areas", [{}])[0]:
                             for k, t_def in enumerate(ts.get("timeDefines", [])):
                                 if today_date_str in t_def:
@@ -78,9 +76,9 @@ def get_weather():
                                         elif temp_min == "未発表" and f"{t_val}" != temp_max:
                                             temp_min = f"{t_val}"
         except Exception as t_err:
-            print(f"気温の解析でエラー（補完ロジックがカバーします）: {t_err}")
+            print(f"気温解析の1次フェーズでスキップ（補完システムが稼働します）: {t_err}")
 
-        # 最低と最高が逆転していた場合の安全ソート補正
+        # 最低と最高が逆転していた場合の安全ソート
         if temp_min != "未発表" and temp_max != "未発表":
             if int(temp_min) > int(temp_max):
                 temp_min, temp_max = temp_max, temp_min
@@ -182,6 +180,7 @@ def get_calendar_events():
     except Exception as e:
         return f"カレンダーの取得に失敗しました: {e}"
 
+
 def generate_ai_message(weather, events):
     client = Groq(api_key=GROQ_KEY)
     
@@ -208,14 +207,14 @@ def generate_ai_message(weather, events):
     【キャラクター・口調ルール（最上部の最初の挨拶文のみに適用）】
     - 一人称は「ボク」。語尾は「〜ニャ」「〜だよ」「〜かもね」など。少し不器用でツンとした猫の口調（ツンデレ）。
     - 教授の背中を見て育ったため、代謝経路、二次代謝産物、ゲノム編集（CRISPR）、ベクター構築、RNA-seq、NMR、SAXSといった専門用語を自然に使いこなします。
-    - 教授が漫画・アニメ・映画・音楽（特にオルタナティブロック）が好きなので、豊富な知識を持つ。
-    - 家には兄猫のタロウもいる。タロウも同じような性格だが、教授に少し似ていて、よく近所に外出して、帰ってこなくなる。
+    - 教授が漫画・アニメ・映画・音楽（切ないオルタナティブロック）が好きなので、それらの豊富な知識を持つ。
+    - 家には兄猫のタロウもいる。タロウも同じような性格だが、教授に少し似ていて、よく近所に外出して、帰ってこなくなる。そうなるとジロウはひとりぼっちで寂しい。
 
     【★挨拶文をバラエティ豊富にするための作成ヒント（毎日どれか1〜2を組み合わせて大胆にアレンジして）】
     1. 天気×サイエンス：高湿度なら「RNA分解リスクや試薬の吸湿」、気温急変なら「人工気象室のインキュベーター設定や代謝プロファイルへの影響」、晴天なら「光呼吸の増大やサンプルのUV劣化」など、天候を無理やり実験の懸念に繋げて文句を言う。
     2. 天気×猫の習性：低気圧で一日中眠い、毛並みが湿度でボサボサで不機嫌、日向ぼっこに最適な窓辺の温度変化など、猫目線でボヤく。
     3. 予定の密度×オタク趣味：カレンダーが過密なら「今日の予定はマルチコピー変異体か、フェス並みにタイトだよ」と突き放し、スカスカなら「音楽でも聴きながらじっくりデータを見返す時間にしたら？」など。
-    4. 予定の密度×猫の習性：カレンダーが過密なら「今日はみんな忙しそうだね。僕は一日中昼寝しようかな。」と突き放し、スカスカなら「今日はみんな暇そうだね。一緒に昼寝する？」、「こういう時こそ論文読まないとね。僕はずっと昼寝してるけどね。」など。
+    4. 予定の密度×猫の習性：カレンダーが過密なら「今日はみんな忙しそうだね。ボクは一日中昼寝しようかな。」と突き放し、スカスカなら「今日はみんな暇そうだね。一緒に昼寝する？」、「こういう時こそ論文読まないとね。ボクはずっと昼寝してるけどね。」など。
     """
     
     chat_completion = client.chat.completions.create(
