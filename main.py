@@ -166,8 +166,8 @@ def generate_ai_message(weather, events):
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            # 高性能かつ軽量で無料枠が安定している gemini-1.5-flash を採用
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            # 高性能かつ軽量で無料枠が安定している gemini-2.5-flash を採用
+            model = genai.GenerativeModel('gemini-2.5-flash')
             
             prompt = f"""あなたに課された役割は、京都市左京区北白川にある教授の家に暮らす黒猫「ジロウ」として、教授の研究室のメンバーに向けて、朝の挨拶と情報通知を行うことです。
 朝の挨拶と情報通知を行うため、以下のルールに従ってメッセージを作成してください。
