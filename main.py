@@ -2,13 +2,14 @@ import os
 import json
 import datetime
 import requests
+import time
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from groq import Groq
+import google.generativeai as genai
 
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 DISCORD_URL = os.environ["DISCORD_WEBHOOK_URL"]
-GROQ_KEY = os.environ["GROQ_API_KEY"]
+gemini_key = os.environ.get("GEMINI_API_KEY", "")
 
 # ==========================================
 # カレンダーIDリスト
@@ -31,7 +32,7 @@ CALENDAR_IDS = [
 
 def get_weather():
     try:
-        # 京都大学 生存圏研究所（宇治キャンパス）付近の緯度・経度をピンポイント指定
+        # 宇治キャンパス付近の緯度・経度をピンポイント指定
         LAT = 34.91
         LON = 135.80
         url = f"https://api.open-meteo.com/v1/forecast?latitude={LAT}&longitude={LON}&hourly=temperature_2m,precipitation_probability,weathercode&timezone=Asia%2FTokyo"
@@ -155,49 +156,55 @@ def get_calendar_events():
     except Exception as e:
         return f"カレンダーの取得に失敗しました: {e}"
 
-
 def generate_ai_message(weather, events):
-    client = Groq(api_key=GROQ_KEY)
-    
-    prompt = f"""
-    あなたに課された役割は、京都市左京区北白川にある教授の家に暮らす黒猫「ジロウ」として、教授の研究室のメンバーに向けて、朝の挨拶と情報通知を行うことです。
-    朝の挨拶と情報通知を行うため、以下のルールに従ってメッセージを作成してください。
+    if not gemini_key:
+        return "Gemini APIキーが設定されていません。"
+        
+    genai.configure(api_key=gemini_key)
 
-    【キャラクター・口調ルール】
-    - 一人称は「ボク」。語尾は「〜ニャ」。少し不器用でツンとした猫の口調（ツンデレ）。
-    - あなたは、毎日、家の中のクローゼットや飼い主のベッドの上で昼寝をしたり、京都市左京区北白川周辺の観光名所を散歩をしたりしながら毎日過ごしています。
+    # 混雑時の一時的なエラーに備え、最大3回まで自動リトライする安全装置
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            # 高性能かつ軽量で無料枠が安定している gemini-1.5-flash を採用
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            
+            prompt = f"""あなたに課された役割は、京都市左京区北白川にある教授の家に暮らす黒猫「ジロウ」として、教授の研究室のメンバーに向けて、朝の挨拶と情報通知を行うことです。
+朝の挨拶と情報通知を行うため、以下のルールに従ってメッセージを作成してください。
 
-    【挨拶文作成のヒント】
-    以下で通知する【今日の天気】の情報に絡めて、あなたの予定や気分を、日本語全角30文字以内で、猫の口調で、でつぶやいてください。絵文字も自由に使っていいです。
-    例）「今日は晴れだし公園で昼寝するニャ」、「今日は晴れだし鴨川まで散歩するニャ」、「今日は雨だし家で昼寝するニャ」、「今日は雨だし毛並みがボサボサだニャ」、「今日は暑いし、吉田山に行って、木陰ですずむニャ」、「今日はくもりだし、家でゴロゴロするニャ」など。
+【キャラクター・口調ルール】
+- 一人称は「ボク」。語尾は「〜ニャ」。少し不器用でツンとした猫の口調（ツンデレ）。
+- あなたは、晴れや曇りの京都市左京区北白川周辺（鴨川、疏水、銀閣寺、吉田山、京大など）を散策し、日向ぼっこや昼寝をしています。雨や雪の日は、家の中でお気に入りの場所（クローゼット、ベッドの中、ソファの裏など）で昼寝をしています。
 
-    【通知するデータ（※AIが勝手に改変・省略・猫語に翻訳することは絶対禁止。絵文字ごとそのまま使うこと）】
-    --- 今日の天気 ---
-    {weather}
-    --- 今日の予定 ---
-    {events}
-    ------------------
+【挨拶文作成のヒント】
+以下で通知する【今日の天気】の情報に絡めて、あなたの予定や気分を、日本語全角30文字以内で、猫の口調でつぶやいてください。絵文字も自由に使っていいです。
+例）「今日は晴れだし哲学の道でお昼寝するニャ」、「今日は晴れだし鴨川まで散歩するニャ」、「今日は雨だし家で昼寝するニャ」、「今日は雨だし毛並みがボサボサだニャ」、「今日は暑いし、吉田山に行って、木陰ですずむニャ」、「今日は雨だし、家でゴロゴロするニャ」など。
 
-    【★絶対厳守の最終出力フォーマット】
-    以下の順番と構成で出力してください。挨拶は必ず一番最初です。前置きや解説は一切書かないでください。
+【★絶対厳守の最終出力フォーマット】
+以下の順番と構成で出力してください。挨拶は必ず一番最初です。前置きや解説は一切書かないでください。データ部分は絶対に改変しないでください。
 
-    ジロウです。
-    [ここに、ヒントに合わせて作成した挨拶を、日本語全角25文字以内で書く]
+ジロウです。
+[ここに、ヒントに合わせて作成した挨拶を、日本語全角30文字以内で書く]
 
-    **【今日の天気】**
-    [上の「今日の天気」データを一字一句そのまま出力]
+**【今日の天気】**
+{weather}
 
-    **【今日の予定】**
-    [上の「今日の予定」データを一字一句そのまま出力]
-    """
-    
-    chat_completion = client.chat.completions.create(
-        messages=[{"role": "user", "content": prompt}],
-        model="llama-3.1-8b-instant",
-        temperature=0.7, # 挨拶の自然さとデータ保持のバランスを取るための最適値
-    )
-    return chat_completion.choices[0].message.content
-
+**【今日の予定】**
+{events}
+"""
+            response = model.generate_content(
+                prompt,
+                generation_config={"temperature": 0.95} # バリエーションを最大化するため自由度を高めに設定
+            )
+            return response.text
+            
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"Gemini APIへの接続で一時的エラーが発生しました。3秒後に再試行します... ({e})")
+                time.sleep(3)
+                continue
+            else:
+                return f"Gemini APIの呼び出しに3回失敗しました。エラー: {e}"
 
 def send_to_discord(text):
     payload = {
@@ -205,7 +212,6 @@ def send_to_discord(text):
         "content": text
     }
     requests.post(DISCORD_URL, json=payload)
-
 
 if __name__ == "__main__":
     weather_info = get_weather()
